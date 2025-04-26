@@ -76,6 +76,7 @@ class PatientDataSerializer(serializers.ModelSerializer):
             drugs_data=validated_data['drugs_data'],
             notes_data=validated_data['notes_data'],
             given_drugs=validated_data['given_drugs'],
+            signed_hc=validated_data['signed_hc'],
             patient_vitals=validated_data.get('patient_vitals',
                                               {
                                                   "heart_beat": [],

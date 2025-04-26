@@ -24,6 +24,7 @@ class PatientData(models.Model):
     drugs_data = JSONField()
     notes_data = JSONField()
     given_drugs = JSONField()
+    signed_hc = JSONField()
 
     patient_vitals = JSONField()
     contact_first_name = models.CharField(max_length=255)
@@ -35,7 +36,7 @@ class PatientData(models.Model):
                        'device_id', 'patient_id', 'floor_no',
                        'care_category', 'date_of_birth', 'blood_type',
                        'height', 'weight', 'gender',
-                       'drugs_data', 'notes_data', 'given_drugs']
+                       'drugs_data', 'notes_data', 'given_drugs', 'signed_hc']
 
     def __str__(self):
         return self.patient_id
