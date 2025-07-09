@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import json
 import uuid
 
 from rest_framework import status
@@ -7,8 +8,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .serializers import UserSerializer, PatientDataSerializer
+from .serializers import UserSerializer, PatientDataSerializer, MedicineDataSerializer
 
+from django.core import serializers
 
 class RegisterUser(APIView):
     permission_classes = [AllowAny]
@@ -62,7 +64,7 @@ class CustomTokenVerifyView(APIView):
             return Response({'success': False}, status=401)
 
 
-from .models import PatientData
+from .models import PatientData, MedicineData
 from django.contrib.auth import get_user_model
 from datetime import datetime
 from io import BytesIO
@@ -80,43 +82,41 @@ RESPONSE_TEMPLATE = {
 }
 
 
-def get_drug_id(input_json):
+# def get_drug_id(input_json):
+#     hash_object = hashlib.sha256()
+#     hash_object.update(
+#         str(input_json["drug_time"] +
+#             input_json["drug_day"] +
+#             input_json["drug_name"] +
+#             input_json["drug_dose"] +
+#             input_json["drug_desc"]).encode('utf-8'))
+#     return hash_object.hexdigest()
+#
+#
+# def get_given_drug_id(input_json):
+#     hash_object = hashlib.sha256()
+#     hash_object.update(
+#         str(input_json["drug_time"] +
+#             input_json["drug_day"] +
+#             input_json["drug_name"] +
+#             input_json["drug_dose"] +
+#             input_json["given_date"] +
+#             input_json["drug_desc"]).encode('utf-8'))
+#     return hash_object.hexdigest()
+#
+#
+# def get_note_id(input_json):
+#     hash_object = hashlib.sha256()
+#     hash_object.update(
+#         str(input_json["note_date"] +
+#             input_json["note_title"] +
+#             input_json["note_data"]).encode('utf-8'))
+#     return hash_object.hexdigest()
+
+
+def get_object_id(input_str):
     hash_object = hashlib.sha256()
-    hash_object.update(
-        str(input_json["drug_time"] +
-            input_json["drug_day"] +
-            input_json["drug_name"] +
-            input_json["drug_dose"] +
-            input_json["drug_desc"]).encode('utf-8'))
-    return hash_object.hexdigest()
-
-
-def get_given_drug_id(input_json):
-    hash_object = hashlib.sha256()
-    hash_object.update(
-        str(input_json["drug_time"] +
-            input_json["drug_day"] +
-            input_json["drug_name"] +
-            input_json["drug_dose"] +
-            input_json["given_date"] +
-            input_json["drug_desc"]).encode('utf-8'))
-    return hash_object.hexdigest()
-
-
-def get_note_id(input_json):
-    hash_object = hashlib.sha256()
-    hash_object.update(
-        str(input_json["note_date"] +
-            input_json["note_title"] +
-            input_json["note_data"]).encode('utf-8'))
-    return hash_object.hexdigest()
-
-
-def get_signed_hc_id(input_json):
-    hash_object = hashlib.sha256()
-    hash_object.update(
-        str(input_json["hc_date"] +
-            input_json["hc_data"]).encode('utf-8'))
+    hash_object.update(input_str.encode('utf-8'))
     return hash_object.hexdigest()
 
 
@@ -131,12 +131,19 @@ class PatientAPI(APIView):
         user = get_user_model().objects.get(email=email)
 
         if request_type == "new":
-            request_data["user"] = user.id
-            request_data["date_of_birth"] = datetime.strptime(request_data["date_of_birth"], "%Y-%m-%d").date()
-            request_data["drugs_data"] = request_data.get("drugs_data", {})
-            request_data["notes_data"] = request_data.get("notes_data", {})
-            request_data["given_drugs"] = request_data.get("given_drugs", {})
-            request_data["signed_hc"] = request_data.get("signed_hc", {})
+            patient_data = {
+                "user": user.id,
+                "patient_id": request_data["patient_personal_info"]["section_1"]["citizenID"],
+                "patient_personal_info": request_data["patient_personal_info"],
+                "patient_medicines": request_data["patient_medicines"] if "patient_medicines" in request_data and
+                                                                          request_data[
+                                                                              "patient_medicines"] is not None else [],
+                "patient_given_medicines": [] if "patient_given_medicines" in request_data and request_data[
+                    "patient_given_medicines"] is not None else [],
+                "patient_signed_hc": [] if "patient_signed_hc" in request_data and request_data[
+                    "patient_signed_hc"] is not None else []
+            }
+
             # image_data = request.data.get('patient_photo')
             # image = Image.open(BytesIO(base64.b64decode(image_data)))
             #
@@ -146,7 +153,8 @@ class PatientAPI(APIView):
             # request_data["patient_photo"] = image_io
 
             print(request_data)
-            serializer = PatientDataSerializer(data=request_data)
+            print(patient_data)
+            serializer = PatientDataSerializer(data=patient_data)
             if serializer.is_valid():
                 serializer.save()
                 return Response({"status": "success", "data": serializer.data}, status=status.HTTP_201_CREATED)
@@ -166,8 +174,7 @@ class PatientAPI(APIView):
         user = get_user_model().objects.get(email=email)
         patient_data = PatientData.objects.exclude(user__isnull=True)
         serializer = PatientDataSerializer(patient_data, many=True)
-        print(serializer)
-        print(serializer.data)
+        print(type(serializer.data[0]["patient_personal_info"]["section_1"]))
 
         return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
 
@@ -178,100 +185,108 @@ class PatientAPI(APIView):
 
         user = get_user_model().objects.get(email=email)
 
-        patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
-
         if request_type == "update_patient":
-            patient_data.floor_no = request_data["floor_no"]
-            patient_data.care_category = request_data["care_category"]
-            patient_data.date_of_birth = request_data["date_of_birth"]
-            patient_data.blood_type = request_data["blood_type"]
-            patient_data.height = request_data["height"]
-            patient_data.weight = request_data["weight"]
-            patient_data.gender = request_data["gender"]
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+            patient_data["patient_personal_info"] = request_data[
+                "patient_personal_info"] if "patient_personal_info" in request_data else patient_data[
+                "patient_personal_info"]
+            patient_data["patient_medicines"] = request_data[
+                "patient_medicines"] if "patient_medicines" in request_data else patient_data["patient_medicines"]
+            patient_data["patient_given_medicines"] = request_data[
+                "patient_given_medicines"] if "patient_given_medicines" in request_data else patient_data[
+                "patient_given_medicines"]
+            patient_data["patient_signed_hc"] = request_data[
+                "patient_signed_hc"] if "patient_signed_hc" in request_data else patient_data["patient_signed_hc"]
+            patient_data["patient_personal_info"]["patient_id"] = patient_data["patient_id"]
 
             patient_data.save()
-            return Response({"status": "success", "data": patient_data}, status=status.HTTP_201_CREATED)
+            return Response({"status": "success", "data": patient_data}, status=status.HTTP_200_OK)
+        elif request_type == "add_scheduled_medicine":
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
 
-        elif request_type == "add_drug":
-            drug_id = get_drug_id(request_data)
-            drug = {
-                "drug_id": drug_id,
-                "drug_time": request_data["drug_time"],
-                "drug_day": request_data["drug_day"],
-                "drug_name": request_data["drug_name"],
-                "drug_desc": request_data["drug_desc"],
-                "drug_dose": request_data["drug_dose"],
+            medicine_id = get_object_id(str(request_data["patient_id"]) + str(request_data["medicine_data"]))
+            request_data["medicine_data"]["prepared"] = {"morning": False, "noon": False, "evening": False}
+            medicine = {
+                "medicine_id": medicine_id,
+                "medicine_data": request_data["medicine_data"],
             }
-            if drug_id in patient_data.drugs_data:
+            if medicine_id in patient_data.patient_medicines:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-            patient_data.drugs_data[drug_id] = drug
-            patient_data.save()
-            return Response({"status": "success", "data": patient_data.drugs_data}, status=status.HTTP_201_CREATED)
+            try:
+                patient_data.patient_medicines[medicine_id] = medicine
+            except Exception:
+                patient_data.patient_medicines = {}
+                patient_data.patient_medicines[medicine_id] = medicine
 
+            patient_data.save()
+            return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_200_OK)
+        elif request_type == "remove_scheduled_medicine":
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+
+            medicine_id = get_object_id(str(request_data["patient_id"]) + str(request_data["medicine_data"]))
+            medicine = {
+                "medicine_id": request_data["medicine_id"],
+                "medicine_data": request_data["medicine_data"],
+            }
+            if medicine_id not in patient_data.drugs_data:
+                return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+            patient_data.patient_medicines[request_data["medicine_id"]] = medicine
+            patient_data.save()
+            return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_200_OK)
         elif request_type == "add_given_drug":
-            drug_id = get_given_drug_id(request_data)
-            drug = {
-                "drug_id": drug_id,
-                "drug_time": request_data["drug_time"],
-                "drug_day": request_data["drug_day"],
-                "drug_name": request_data["drug_name"],
-                "drug_desc": request_data["drug_desc"],
-                "drug_dose": request_data["drug_dose"],
-                "given_date": request_data["given_date"]
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+
+            medicine_id = get_object_id(str(request_data["patient_id"]) + str(request_data["medicine_data"]))
+            medicine = {
+                "medicine_id": medicine_id,
+                "medicine_data": request_data["medicine_data"],
             }
 
-            date_obj = datetime.strptime(request_data["given_date"].split(" GMT")[0], "%a %b %d %Y %H:%M:%S")
+            date_obj = datetime.strptime(request_data["medicine_data"]["given_date"].split(" GMT")[0],
+                                         "%a %b %d %Y %H:%M:%S")
             # "Tue Apr 23 2024 01:53:24 GMT+0300 (GMT+03:00)"
-            if (request_data["drug_day"] != datetime.today().now().strftime("%A")) \
+            if (request_data["medicine_data"]["drug_day"] != datetime.today().now().strftime("%A")) \
                     or (date_obj.date() != datetime.today().date()) \
-                    or (drug_id in patient_data.given_drugs):
+                    or (medicine_id in patient_data.patient_given_medicines):
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-            patient_data.given_drugs[drug_id] = drug
+            patient_data.patient_given_medicines[medicine_id] = medicine
             patient_data.save()
-            return Response({"status": "success", "data": patient_data.given_drugs}, status=status.HTTP_201_CREATED)
-
-        elif request_type == "add_note":
-            note_id = get_note_id(request_data)
-            if note_id in patient_data.notes_data:
-                return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
-
-            note = {
-                "note_id": note_id,
-                "note_date": request_data["note_date"],
-                "note_title": request_data["note_title"],
-                "note_data": request_data["note_data"],
-            }
-            patient_data.notes_data[note_id] = note
-            patient_data.save()
-            return Response({"status": "success", "data": patient_data.notes_data}, status=status.HTTP_201_CREATED)
-
+            return Response({"status": "success", "data": patient_data.patient_given_medicines},
+                            status=status.HTTP_200_OK)
         elif request_type == "add_signed_hc":
-            signed_hc_id = get_signed_hc_id(request_data)
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+
+            signed_hc_id = get_object_id(str(request_data["patient_id"]) + str(request_data["signed_hc_data"]))
+
+            signed_hc = {
+                "signed_hc_id": signed_hc_id,
+                "signed_hc_data": [request_data["signed_hc_data"], ]
+            }
+
             if signed_hc_id in patient_data.signed_hc:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-            hc = {
-                "signed_hc_id": signed_hc_id,
-                "hc_date": [request_data["hc_date"], ],
-                "hc_data": request_data["hc_data"],
-            }
-            patient_data.signed_hc[signed_hc_id] = hc
+            patient_data.signed_hc[signed_hc_id] = signed_hc
             patient_data.save()
-            return Response({"status": "success", "data": patient_data.signed_hc}, status=status.HTTP_201_CREATED)
-
+            return Response({"status": "success", "data": patient_data.signed_hc}, status=status.HTTP_200_OK)
         elif request_type == "update_signed_hc":
-            signed_hc_id = get_signed_hc_id(request_data)
-            if signed_hc_id not in patient_data.signed_hc:
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+
+            if request_data["signed_hc_id"] not in patient_data.signed_hc:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-            hc = {
-                "signed_hc_id": signed_hc_id,
-                "hc_date": [request_data["hc_date"], ].extend(patient_data.signed_hc[signed_hc_id]['hc_date']),
-                "hc_data": request_data["hc_data"],
+            new_signed_hc_list = patient_data.signed_hc[request_data["signed_hc_id"]]["signed_hc_data"]
+            new_signed_hc_list.append(request_data["signed_hc_data"])
+
+            signed_hc = {
+                "signed_hc_id": request_data["signed_hc_id"],
+                "signed_hc_data": new_signed_hc_list
             }
-            patient_data.signed_hc[signed_hc_id] = hc
+
+            patient_data.signed_hc[request_data["signed_hc_id"]] = signed_hc
             patient_data.save()
             return Response({"status": "success", "data": patient_data.signed_hc}, status=status.HTTP_201_CREATED)
 
@@ -341,3 +356,48 @@ class PatientAPI(APIView):
             patient_data.signed_hc = signed_hc
             patient_data.save()
             return Response({"status": "success", "data": patient_data.signed_hc}, status=status.HTTP_201_CREATED)
+
+
+class MedicineAPI(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        request_data = dict(request.data)
+        print(request_data)
+        email = request_data.pop("email")
+        request_type = request_data.pop("type")
+
+        user = get_user_model().objects.get(email=email)
+
+        if request_type == "new":
+            medicine_data = {
+                "medicine_id": get_object_id(str(request_data["medicine_data"]["medicine_category"]) + str(request_data["medicine_data"]["medicine_name"])),
+                "medicine_data": request_data["medicine_data"]
+            }
+
+            print(request_data)
+            print(medicine_data)
+            serializer = MedicineDataSerializer(data=medicine_data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"status": "success", "data": serializer.data}, status=status.HTTP_201_CREATED)
+            else:
+                print(serializer.errors)
+                return Response({"status": "error", "data": serializer.errors},
+                                status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        email = request.query_params.get('email')
+
+        if not email:
+            return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = get_user_model().objects.get(email=email)
+        medicine_data = MedicineData.objects
+        serializer = MedicineDataSerializer(medicine_data, many=True)
+        print(serializer)
+        print(serializer.data)
+
+        return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)

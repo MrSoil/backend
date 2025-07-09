@@ -5,39 +5,27 @@ from djongo.models import JSONField
 from backend import settings
 
 
+class MedicineData(models.Model):
+    medicine_id = models.CharField(primary_key=True, max_length=255, unique=True)
+    # models.AutoField(primary_key=True, unique=True)
+    medicine_data = JSONField()
+
+    REQUIRED_FIELDS = ['medicine_data']
+
+    def __str__(self):
+        return self.medicine_id
+
 class PatientData(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='patients')
-    device_id = models.CharField(max_length=255, unique=True)
-
-    first_name = models.CharField(max_length=255)
-    last_name = models.CharField(max_length=255)
-
     patient_id = models.CharField(max_length=255, unique=True)
-    floor_no = models.CharField(max_length=255)
-    care_category = models.CharField(max_length=255)
-    date_of_birth = models.DateField(max_length=255)
-    blood_type = models.CharField(max_length=255)
-    height = models.CharField(max_length=255)
-    weight = models.CharField(max_length=255)
-    gender = models.CharField(max_length=255)
 
-    drugs_data = JSONField()
-    notes_data = JSONField()
-    given_drugs = JSONField()
-    signed_hc = JSONField()
+    patient_personal_info = JSONField()
+    patient_medicines = JSONField()
+    patient_given_medicines = JSONField()
+    patient_signed_hc = JSONField()
 
-    patient_vitals = JSONField()
-    contact_first_name = models.CharField(max_length=255)
-    contact_last_name = models.CharField(max_length=255)
-    contact_phone_no = models.CharField(max_length=255)
-    patient_photo = models.TextField()
-
-    REQUIRED_FIELDS = ['user', 'first_name', 'last_name',
-                       'device_id', 'patient_id', 'floor_no',
-                       'care_category', 'date_of_birth', 'blood_type',
-                       'height', 'weight', 'gender',
-                       'drugs_data', 'notes_data', 'given_drugs', 'signed_hc']
-
+    REQUIRED_FIELDS = ['user', 'patient_id', 'patient_personal_info', 'patient_medicines',
+                       'patient_given_medicines', 'patient_signed_hc']
     def __str__(self):
         return self.patient_id
 

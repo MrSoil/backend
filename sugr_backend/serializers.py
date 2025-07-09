@@ -1,16 +1,25 @@
 import datetime
 import hashlib
 import uuid
+from collections import OrderedDict
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from sugr_backend.models import PatientData
+from sugr_backend.models import PatientData, MedicineData
 from io import BytesIO
 from PIL import Image
 import base64
 
 User = get_user_model()
+
+
+class CustomJSONSerializer(serializers.BaseSerializer):
+    def to_representation(self, obj):
+        if isinstance(obj, OrderedDict):
+            # Convert OrderedDict to a regular dict
+            return {k: v for k, v in obj.items()}
+        return obj
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -31,16 +40,14 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class PatientDataSerializer(serializers.ModelSerializer):
-    patient_vitals = serializers.JSONField(required=False, allow_null=True)
-    patient_photo = serializers.JSONField(required=False, allow_null=True)
-    contact_first_name = serializers.CharField(required=False, allow_null=True, max_length=255)
-    contact_last_name = serializers.CharField(required=False, allow_null=True, max_length=255)
-    contact_phone_no = serializers.CharField(required=False, allow_null=True, max_length=255)
+    patient_personal_info = serializers.JSONField(required=True, allow_null=True)
+    patient_medicines = serializers.JSONField(required=False, allow_null=True)
+    patient_given_medicines = serializers.JSONField(required=False, allow_null=True)
+    patient_signed_hc = serializers.JSONField(required=False, allow_null=True)
 
     class Meta:
         model = PatientData
         fields = '__all__'
-        # fields = ('id', 'user', 'first_name', 'last_name', 'device_id', 'patient_id', 'floor_no', 'drugs_data', 'notes_data', 'given_drugs')
 
     def create(self, validated_data):
         # image_data = validated_data.get('patient_photo', None)
@@ -62,32 +69,25 @@ class PatientDataSerializer(serializers.ModelSerializer):
 
         patient = PatientData.objects.create(
             user=validated_data['user'],
-            first_name=validated_data['first_name'],
-            last_name=validated_data['last_name'],
-            device_id=validated_data['device_id'],
             patient_id=validated_data['patient_id'],
-            floor_no=validated_data['floor_no'],
-            care_category=validated_data['care_category'],
-            date_of_birth=validated_data['date_of_birth'],
-            blood_type=validated_data['blood_type'],
-            height=validated_data['height'],
-            weight=validated_data['weight'],
-            gender=validated_data['gender'],
-            drugs_data=validated_data['drugs_data'],
-            notes_data=validated_data['notes_data'],
-            given_drugs=validated_data['given_drugs'],
-            signed_hc=validated_data['signed_hc'],
-            patient_vitals=validated_data.get('patient_vitals',
-                                              {
-                                                  "heart_beat": [],
-                                                  "oxygen": [],
-                                                  "stress": [],
-                                                  "sleep": [],
-                                                  "vitality": []
-                                              }),
-            contact_first_name=validated_data.get('contact_first_name', None),
-            contact_last_name=validated_data.get('contact_last_name', None),
-            contact_phone_no=validated_data.get('contact_phone_no', None),
-            patient_photo=validated_data.get('patient_photo', None)
+            patient_personal_info=validated_data['patient_personal_info'],
+            patient_medicines=validated_data['patient_medicines'],
+            patient_given_medicines=validated_data['patient_given_medicines'],
+            patient_signed_hc=validated_data['patient_signed_hc']
         )
         return patient
+
+
+class MedicineDataSerializer(serializers.ModelSerializer):
+    medicine_data = serializers.JSONField(required=True, allow_null=True)
+
+    class Meta:
+        model = MedicineData
+        fields = '__all__'
+
+    def create(self, validated_data):
+        user = MedicineData.objects.create(
+            medicine_id=validated_data['medicine_id'],
+            medicine_data=validated_data['medicine_data']
+        )
+        return user
