@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from djongo import models as djongo_models  # important
 from djongo.models import JSONField
 
 from backend import settings
@@ -21,11 +22,10 @@ class PatientData(models.Model):
 
     patient_personal_info = JSONField()
     patient_medicines = JSONField()
-    patient_given_medicines = JSONField()
     patient_signed_hc = JSONField()
 
     REQUIRED_FIELDS = ['user', 'patient_id', 'patient_personal_info', 'patient_medicines',
-                       'patient_given_medicines', 'patient_signed_hc']
+                       'patient_signed_hc']
     def __str__(self):
         return self.patient_id
 
