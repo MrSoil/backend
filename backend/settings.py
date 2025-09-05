@@ -91,7 +91,8 @@ DATABASES = {
           'ENGINE': 'djongo',
           'NAME': 'sugrBE',
           'CLIENT': {
-              'host': 'mongo',
+              'host': 'localhost',
+              # 'host': 'mongo',
               'port': 27017,
               'username': 'admin',
               'password': 'admin'
