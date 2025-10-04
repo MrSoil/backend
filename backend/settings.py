@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-j%c=1xnn&0cx39ds9=$0kfhd)-4h(krb*4&dq5^!@lvnx5$2#r
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", '*']
 
 # DJANGO_DEBUG = os.getenv("DJANGO_DEBUG", "0") == "1"
 # SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-secret")
@@ -91,8 +91,8 @@ DATABASES = {
           'ENGINE': 'djongo',
           'NAME': 'sugrBE',
           'CLIENT': {
-              'host': 'localhost',
-              # 'host': 'mongo',
+              # 'host': 'localhost',
+              'host': 'mongo',
               'port': 27017,
               'username': 'admin',
               'password': 'admin'
