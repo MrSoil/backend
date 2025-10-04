@@ -172,14 +172,20 @@ class PatientAPI(APIView):
 
     def get(self, request):
         email = request.query_params.get('email')
+        patient_id = request.query_params.get('patient_id')
 
         if not email:
             return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = get_user_model().objects.get(email=email)
-        patient_data = PatientData.objects.exclude(user__isnull=True)
+
+        if not patient_id:
+            patient_data = PatientData.objects.exclude(user__isnull=True)
+        else:
+            patient_data = PatientData.objects.exclude(user__isnull=True).filter(patient_id=patient_id)
+
         serializer = PatientDataSerializer(patient_data, many=True)
-        print(type(serializer.data[0]["patient_personal_info"]["section_1"]))
+        print(serializer.data)
 
         return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
 
@@ -256,15 +262,17 @@ class PatientAPI(APIView):
 
             medicine_id = request_data["medicine_id"]
             med_prepared_dates = patient_data.patient_medicines[medicine_id]["medicine_data"]["prepared_dates"]
-
-            date_obj = datetime.strptime(request_data["today_date"].split(" GMT")[0],
-                                         "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
-            # "Tue Apr 23 2024 01:53:24 GMT+0300 (GMT+03:00)"
-            try:
+            for each_date in request_data["prepared_dates"]:
+                date_obj = datetime.strptime(each_date.split(" GMT")[0],
+                                             "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
+                # "Tue Apr 23 2024 01:53:24 GMT+0300 (GMT+03:00)"
                 med_prepared_dates[date_obj] = True
+
+            try:
                 patient_data.patient_medicines[medicine_id]["medicine_data"]["prepared_dates"] = med_prepared_dates
             except Exception:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
             patient_data.save()
 
             return Response({"status": "success", "data": patient_data.patient_medicines},
@@ -288,12 +296,14 @@ class PatientAPI(APIView):
             if date_obj not in patient_data.patient_signed_hc:
                 patient_data.patient_signed_hc[date_obj] = {signed_hc_type: [signed_hc, ]}
                 patient_data.save()
-                return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_201_CREATED)
+                return Response({"status": "success", "data": patient_data.patient_signed_hc},
+                                status=status.HTTP_201_CREATED)
             else:
                 if signed_hc_type not in patient_data.patient_signed_hc[date_obj]:
                     patient_data.patient_signed_hc[date_obj][signed_hc_type] = [signed_hc, ]
                     patient_data.save()
-                    return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_201_CREATED)
+                    return Response({"status": "success", "data": patient_data.patient_signed_hc},
+                                    status=status.HTTP_201_CREATED)
                 else:
                     return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -320,16 +330,17 @@ class PatientAPI(APIView):
             return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_200_OK)
 
     def delete(self, request):
-        email = request.query_params.get('email', False)
-        request_type = request.query_params.get('type', False)
-        patient_id = request.query_params.get('patient_id', False)
+        request_data = dict(request.data)
+        request_type = request_data["type"]
 
-        if not (email and request_type and patient_id):
+        if not (request_data["email"] and request_data["type"] and request_data["patient_id"]):
             return Response({"error": "Email, Request Type and Patient ID must be provided."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_model().objects.get(email=email)
-        patient_data = list(PatientData.objects.filter(user=user, patient_id=patient_id))[0]
+        user = get_user_model().objects.get(email=request_data["email"])
+        patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+
+        print(request.data)
 
         if not patient_data:
             return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
@@ -346,19 +357,26 @@ class PatientAPI(APIView):
             patient_data.contact_phone_no = None
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_id}, status=status.HTTP_200_OK)
-        elif request_type == "delete_drug":
-            drugs_data = patient_data["drugs_data"]
+        elif request_type == "delete_medicines":
+            print(request.data)
 
-            drug_id = request.query_params.get('drug_id', False)
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
 
-            if not drug_id:
-                return Response({"error": "Drug ID must be provided."},
-                                status=status.HTTP_400_BAD_REQUEST)
+            medicine_ids = request_data["medicine_ids"]
+            print("medicine_ids")
+            print(medicine_ids)
 
-            del drugs_data[drug_id]
-            patient_data.drugs_data = drugs_data
+            patient_medicines = patient_data.patient_medicines
+            for medicine_id in medicine_ids:
+                del patient_medicines[medicine_id]
+            try:
+                patient_data.patient_medicines = patient_medicines
+            except Exception:
+                return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
             patient_data.save()
-            return Response({"status": "success", "data": patient_data.drugs_data}, status=status.HTTP_201_CREATED)
+            return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_201_CREATED)
+
         elif request_type == "delete_note":
             notes_data = patient_data["notes_data"]
 
@@ -384,7 +402,8 @@ class PatientAPI(APIView):
             del signed_hc[signed_hc_id]
             patient_data.patient_signed_hc = signed_hc
             patient_data.save()
-            return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_201_CREATED)
+            return Response({"status": "success", "data": patient_data.patient_signed_hc},
+                            status=status.HTTP_201_CREATED)
 
 
 class MedicineAPI(APIView):
@@ -400,7 +419,8 @@ class MedicineAPI(APIView):
 
         if request_type == "new":
             medicine_data = {
-                "medicine_id": get_object_id(str(request_data["medicine_data"]["medicine_category"]) + str(request_data["medicine_data"]["medicine_name"])),
+                "medicine_id": get_object_id(str(request_data["medicine_data"]["medicine_category"]) + str(
+                    request_data["medicine_data"]["medicine_name"])),
                 "medicine_data": request_data["medicine_data"]
             }
 
