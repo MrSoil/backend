@@ -43,6 +43,8 @@ class PatientDataSerializer(serializers.ModelSerializer):
     patient_personal_info = serializers.JSONField(required=True, allow_null=True)
     patient_medicines = serializers.JSONField(required=False, allow_null=True)
     patient_signed_hc = serializers.JSONField(required=False, allow_null=True)
+    patient_vitals = serializers.JSONField(required=False, allow_null=True)
+    patient_notes = serializers.JSONField(required=False, allow_null=True)
 
     class Meta:
         model = PatientData
@@ -71,7 +73,9 @@ class PatientDataSerializer(serializers.ModelSerializer):
             patient_id=validated_data['patient_id'],
             patient_personal_info=validated_data['patient_personal_info'],
             patient_medicines=validated_data['patient_medicines'],
-            patient_signed_hc=validated_data['patient_signed_hc']
+            patient_signed_hc=validated_data['patient_signed_hc'],
+            patient_vitals=validated_data.get('patient_vitals', {}),
+            patient_notes=validated_data.get('patient_notes', {})
         )
         return patient
 

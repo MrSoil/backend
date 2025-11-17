@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-j%c=1xnn&0cx39ds9=$0kfhd)-4h(krb*4&dq5^!@lvnx5$2#r
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", '*']
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", 'testserver.local', '*']
 
 # DJANGO_DEBUG = os.getenv("DJANGO_DEBUG", "0") == "1"
 # SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-secret")
@@ -91,8 +91,8 @@ DATABASES = {
           'ENGINE': 'djongo',
           'NAME': 'sugrBE',
           'CLIENT': {
-              # 'host': 'localhost',
-              'host': 'mongo',
+              'host': 'localhost',
+              # 'host': 'mongo',
               'port': 27017,
               'username': 'admin',
               'password': 'admin'
@@ -179,8 +179,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost",
     "http://localhost:80",
-    "http://127.0.0.1:3000"
-    "*"
+    "http://127.0.0.1:3000",
+    "http://testserver.local",
 ]
 
 CORS_ALLOW_METHODS = [
@@ -203,3 +203,5 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+
+CORS_ALLOW_CREDENTIALS = True

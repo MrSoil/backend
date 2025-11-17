@@ -23,6 +23,8 @@ class PatientData(models.Model):
     patient_personal_info = JSONField()
     patient_medicines = JSONField()
     patient_signed_hc = JSONField()
+    patient_vitals = JSONField(default=dict)
+    patient_notes = JSONField(default=dict)
 
     REQUIRED_FIELDS = ['user', 'patient_id', 'patient_personal_info', 'patient_medicines',
                        'patient_signed_hc']

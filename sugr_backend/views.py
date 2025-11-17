@@ -146,7 +146,11 @@ class PatientAPI(APIView):
                                                                           request_data[
                                                                               "patient_medicines"] is not None else [],
                 "patient_signed_hc": {} if "patient_signed_hc" in request_data and request_data[
-                    "patient_signed_hc"] is not None else {}
+                    "patient_signed_hc"] is not None else {},
+                "patient_vitals": {} if "patient_vitals" in request_data and request_data[
+                    "patient_vitals"] is not None else {},
+                "patient_notes": {} if "patient_notes" in request_data and request_data[
+                    "patient_notes"] is not None else {}
             }
 
             # image_data = request.data.get('patient_photo')
@@ -177,8 +181,6 @@ class PatientAPI(APIView):
         if not email:
             return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_model().objects.get(email=email)
-
         if not patient_id:
             patient_data = PatientData.objects.exclude(user__isnull=True)
         else:
@@ -205,6 +207,10 @@ class PatientAPI(APIView):
                 "patient_medicines"] if "patient_medicines" in request_data else patient_data["patient_medicines"]
             patient_data["patient_signed_hc"] = request_data[
                 "patient_signed_hc"] if "patient_signed_hc" in request_data else patient_data["patient_signed_hc"]
+            patient_data["patient_vitals"] = request_data[
+                "patient_vitals"] if "patient_vitals" in request_data else patient_data.get("patient_vitals", {})
+            patient_data["patient_notes"] = request_data[
+                "patient_notes"] if "patient_notes" in request_data else patient_data.get("patient_notes", {})
             patient_data["patient_personal_info"]["patient_id"] = patient_data["patient_id"]
 
             patient_data.save()
@@ -253,6 +259,7 @@ class PatientAPI(APIView):
                 patient_data.patient_medicines[medicine_id]["medicine_data"]["given_dates"][given_period] = given_dates
             except Exception:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+            print(patient_data.patient_medicines[medicine_id]["medicine_data"]["given_dates"][given_period])
             patient_data.save()
 
             return Response({"status": "success", "data": patient_data.patient_medicines},
@@ -328,9 +335,110 @@ class PatientAPI(APIView):
 
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_200_OK)
+        elif request_type == "add_vitals":
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+            
+            # Initialize patient_vitals if it doesn't exist
+            if not patient_data.patient_vitals:
+                patient_data.patient_vitals = {}
+            
+            # Store vitals as arrays of values, with each entry having a timestamp
+            vitals_data = request_data.get("vitals_data", {})
+            today_date = request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
+            date_obj = datetime.strptime(today_date.split(" GMT")[0], "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
+            
+            # Initialize each vital type if it doesn't exist
+            vital_types = ["heart_beat", "oxygen", "stress", "sleep", "vitality"]
+            for vital_type in vital_types:
+                if vital_type not in patient_data.patient_vitals:
+                    patient_data.patient_vitals[vital_type] = []
+            
+            # Add new vital values
+            if "heart_beat" in vitals_data and vitals_data["heart_beat"]:
+                patient_data.patient_vitals["heart_beat"].append({
+                    "value": float(vitals_data["heart_beat"]),
+                    "date": date_obj,
+                    "timestamp": today_date
+                })
+            if "oxygen" in vitals_data and vitals_data["oxygen"]:
+                patient_data.patient_vitals["oxygen"].append({
+                    "value": float(vitals_data["oxygen"]),
+                    "date": date_obj,
+                    "timestamp": today_date
+                })
+            if "stress" in vitals_data and vitals_data["stress"]:
+                patient_data.patient_vitals["stress"].append({
+                    "value": float(vitals_data["stress"]),
+                    "date": date_obj,
+                    "timestamp": today_date
+                })
+            if "sleep" in vitals_data and vitals_data["sleep"]:
+                patient_data.patient_vitals["sleep"].append({
+                    "value": float(vitals_data["sleep"]),
+                    "date": date_obj,
+                    "timestamp": today_date
+                })
+            if "vitality" in vitals_data and vitals_data["vitality"]:
+                patient_data.patient_vitals["vitality"].append({
+                    "value": float(vitals_data["vitality"]),
+                    "date": date_obj,
+                    "timestamp": today_date
+                })
+            
+            patient_data.save()
+            return Response({"status": "success", "data": patient_data.patient_vitals}, status=status.HTTP_200_OK)
+        elif request_type == "add_note":
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+            
+            # Initialize patient_notes if it doesn't exist
+            if not patient_data.patient_notes:
+                patient_data.patient_notes = {}
+            
+            # Generate note ID
+            note_id = get_object_id(str(request_data["patient_id"]) + str(request_data["note_title"]) + str(request_data["note_data"]) + str(request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))))
+            
+            today_date = request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
+            date_obj = datetime.strptime(today_date.split(" GMT")[0], "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
+            
+            note = {
+                "note_id": note_id,
+                "note_title": request_data["note_title"],
+                "note_data": request_data["note_data"],
+                "note_date": date_obj,
+                "created_by": email,
+                "timestamp": today_date
+            }
+            
+            # Store notes by date
+            if date_obj not in patient_data.patient_notes:
+                patient_data.patient_notes[date_obj] = {}
+            
+            patient_data.patient_notes[date_obj][note_id] = note
+            patient_data.save()
+            
+            return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
+        elif request_type == "update_note":
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+            
+            note_id = request_data.get("note_id")
+            date_obj = request_data.get("note_date")
+            
+            if not patient_data.patient_notes or date_obj not in patient_data.patient_notes or note_id not in patient_data.patient_notes[date_obj]:
+                return Response({"status": "failed", "error": "Note not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            today_date = request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
+            
+            # Update note
+            patient_data.patient_notes[date_obj][note_id]["note_title"] = request_data.get("note_title", patient_data.patient_notes[date_obj][note_id]["note_title"])
+            patient_data.patient_notes[date_obj][note_id]["note_data"] = request_data.get("note_data", patient_data.patient_notes[date_obj][note_id]["note_data"])
+            patient_data.patient_notes[date_obj][note_id]["updated_at"] = today_date
+            
+            patient_data.save()
+            return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
 
     def delete(self, request):
-        request_data = dict(request.data)
+        request_data = request.GET
+        print(request_data["type"])
         request_type = request_data["type"]
 
         if not (request_data["email"] and request_data["type"] and request_data["patient_id"]):
@@ -340,21 +448,16 @@ class PatientAPI(APIView):
         user = get_user_model().objects.get(email=request_data["email"])
         patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
 
-        print(request.data)
-
         if not patient_data:
             return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
         if request_type == "delete_patient":
-            patient_data.user = None
-            patient_data.first_name = None
-            patient_data.last_name = None
-            patient_data.patient_id = uuid.uuid4()
-            patient_data.floor_no = None
-            patient_data.device_id = uuid.uuid4()
-            patient_data.contact_first_name = None
-            patient_data.contact_last_name = None
-            patient_data.contact_phone_no = None
+            patient_personal_info = patient_data.patient_personal_info
+            patient_personal_info["section_1"] = None
+            patient_personal_info["section_2"] = None
+            patient_personal_info["section_3"] = None
+            patient_personal_info["section_4"] = None
+            patient_data.patient_personal_info = patient_personal_info
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_id}, status=status.HTTP_200_OK)
         elif request_type == "delete_medicines":
@@ -378,18 +481,22 @@ class PatientAPI(APIView):
             return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_201_CREATED)
 
         elif request_type == "delete_note":
-            notes_data = patient_data["notes_data"]
-
-            note_id = request.query_params.get('note_id', False)
-
-            if not note_id:
-                return Response({"error": "Note ID must be provided."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            del notes_data[note_id]
-            patient_data.notes_data = notes_data
+            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
+            
+            note_id = request_data.get("note_id")
+            date_obj = request_data.get("note_date")
+            
+            if not patient_data.patient_notes or date_obj not in patient_data.patient_notes or note_id not in patient_data.patient_notes[date_obj]:
+                return Response({"status": "failed", "error": "Note not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            del patient_data.patient_notes[date_obj][note_id]
+            
+            # Remove date entry if no notes left
+            if len(patient_data.patient_notes[date_obj]) == 0:
+                del patient_data.patient_notes[date_obj]
+            
             patient_data.save()
-            return Response({"status": "success", "data": patient_data.notes_data}, status=status.HTTP_201_CREATED)
+            return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
         elif request_type == "delete_signed_hc":
             signed_hc = patient_data["signed_hc"]
 
