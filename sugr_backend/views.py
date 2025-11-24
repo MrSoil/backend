@@ -398,7 +398,7 @@ class PatientAPI(APIView):
             note_id = get_object_id(str(request_data["patient_id"]) + str(request_data["note_title"]) + str(request_data["note_data"]) + str(request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))))
             
             today_date = request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
-            date_obj = datetime.strptime(today_date.split(" GMT")[0], "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
+            date_obj = datetime.strptime(today_date.split(" GMT")[0], "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y %H:%M:%S")
             
             note = {
                 "note_id": note_id,
@@ -409,11 +409,7 @@ class PatientAPI(APIView):
                 "timestamp": today_date
             }
             
-            # Store notes by date
-            if date_obj not in patient_data.patient_notes:
-                patient_data.patient_notes[date_obj] = {}
-            
-            patient_data.patient_notes[date_obj][note_id] = note
+            patient_data.patient_notes[note_id] = note
             patient_data.save()
             
             return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
@@ -422,17 +418,19 @@ class PatientAPI(APIView):
             
             note_id = request_data.get("note_id")
             date_obj = request_data.get("note_date")
-            
-            if not patient_data.patient_notes or date_obj not in patient_data.patient_notes or note_id not in patient_data.patient_notes[date_obj]:
+
+            if not patient_data.patient_notes or note_id not in patient_data.patient_notes:
                 return Response({"status": "failed", "error": "Note not found"}, status=status.HTTP_404_NOT_FOUND)
             
             today_date = request_data.get("today_date", datetime.now().strftime("%a %b %d %Y %H:%M:%S"))
-            
+            updated_date_obj = datetime.strptime(today_date.split(" GMT")[0], "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y %H:%M:%S")
+
             # Update note
-            patient_data.patient_notes[date_obj][note_id]["note_title"] = request_data.get("note_title", patient_data.patient_notes[date_obj][note_id]["note_title"])
-            patient_data.patient_notes[date_obj][note_id]["note_data"] = request_data.get("note_data", patient_data.patient_notes[date_obj][note_id]["note_data"])
-            patient_data.patient_notes[date_obj][note_id]["updated_at"] = today_date
-            
+            patient_data.patient_notes[note_id]["note_title"] = request_data.get("note_title", patient_data.patient_notes[note_id]["note_title"])
+            patient_data.patient_notes[note_id]["note_data"] = request_data.get("note_data", patient_data.patient_notes[note_id]["note_data"])
+            patient_data.patient_notes[note_id]["note_date"] = updated_date_obj
+            patient_data.patient_notes[note_id]["updated_at"] = today_date
+
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
 
@@ -455,9 +453,9 @@ class PatientAPI(APIView):
             patient_personal_info = patient_data.patient_personal_info
             patient_personal_info["section_1"] = None
             patient_personal_info["section_2"] = None
-            patient_personal_info["section_3"] = None
-            patient_personal_info["section_4"] = None
             patient_data.patient_personal_info = patient_personal_info
+            patient_data.patient_id = ""
+            patient_data.user_id = None
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_id}, status=status.HTTP_200_OK)
         elif request_type == "delete_medicines":
