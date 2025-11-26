@@ -199,22 +199,44 @@ class PatientAPI(APIView):
         user = get_user_model().objects.get(email=email)
 
         if request_type == "update_patient":
-            patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
-            patient_data["patient_personal_info"] = request_data[
-                "patient_personal_info"] if "patient_personal_info" in request_data else patient_data[
-                "patient_personal_info"]
-            patient_data["patient_medicines"] = request_data[
-                "patient_medicines"] if "patient_medicines" in request_data else patient_data["patient_medicines"]
-            patient_data["patient_signed_hc"] = request_data[
-                "patient_signed_hc"] if "patient_signed_hc" in request_data else patient_data["patient_signed_hc"]
-            patient_data["patient_vitals"] = request_data[
-                "patient_vitals"] if "patient_vitals" in request_data else patient_data.get("patient_vitals", {})
-            patient_data["patient_notes"] = request_data[
-                "patient_notes"] if "patient_notes" in request_data else patient_data.get("patient_notes", {})
-            patient_data["patient_personal_info"]["patient_id"] = patient_data["patient_id"]
+            try:
+                patient_data = PatientData.objects.get(user=user, patient_id=request_data["patient_id"])
+                
+                # Update patient_personal_info if provided
+                if "patient_personal_info" in request_data:
+                    # Make a copy to avoid modifying the original request data
+                    personal_info = copy.deepcopy(request_data["patient_personal_info"])
+                    # Ensure patient_id is set in section_1
+                    if "section_1" in personal_info:
+                        personal_info["section_1"]["patient_id"] = patient_data.patient_id
+                    patient_data.patient_personal_info = personal_info
+                
+                # Update patient_medicines if provided
+                if "patient_medicines" in request_data:
+                    patient_data.patient_medicines = request_data["patient_medicines"]
+                
+                # Update patient_signed_hc if provided
+                if "patient_signed_hc" in request_data:
+                    patient_data.patient_signed_hc = request_data["patient_signed_hc"]
+                
+                # Update patient_vitals if provided
+                if "patient_vitals" in request_data:
+                    patient_data.patient_vitals = request_data["patient_vitals"]
+                
+                # Update patient_notes if provided
+                if "patient_notes" in request_data:
+                    patient_data.patient_notes = request_data["patient_notes"]
 
-            patient_data.save()
-            return Response({"status": "success", "data": patient_data}, status=status.HTTP_200_OK)
+                patient_data.save()
+                
+                # Serialize the response
+                serializer = PatientDataSerializer(patient_data)
+                return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+            except PatientData.DoesNotExist:
+                return Response({"status": "error", "message": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                print(f"Error updating patient: {str(e)}")
+                return Response({"status": "error", "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         elif request_type == "add_scheduled_medicine":
             patient_data = list(PatientData.objects.filter(user=user, patient_id=request_data["patient_id"]))[0]
             medicine_id = get_object_id(str(request_data["patient_id"]) + str(request_data["medicine_data"]))
@@ -255,7 +277,11 @@ class PatientAPI(APIView):
                                          "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
             # "Tue Apr 23 2024 01:53:24 GMT+0300 (GMT+03:00)"
             try:
-                given_dates[date_obj] = True
+                # Store timestamp object instead of just boolean
+                given_dates[date_obj] = {
+                    "timestamp": request_data["today_date"],
+                    "given": True
+                }
                 patient_data.patient_medicines[medicine_id]["medicine_data"]["given_dates"][given_period] = given_dates
             except Exception:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
