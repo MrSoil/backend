@@ -35,9 +35,6 @@ class LoginUser(APIView):
         email = request.data.get('email')
         password = request.data.get('password')
         user = get_user_model().objects.get(email=email)
-        print(user)
-        print(password)
-
         user = authenticate(email=email, password=password) if user else None
 
         if user is not None:
@@ -133,9 +130,6 @@ class PatientAPI(APIView):
         request_type = request_data.pop("type")
 
         user = get_user_model().objects.get(email=email)
-        print(user)
-        print(user.pk)
-        print(user.id)
 
         if request_type == "new":
             patient_data = {
@@ -161,14 +155,11 @@ class PatientAPI(APIView):
             # image_io.seek(0)
             # request_data["patient_photo"] = image_io
 
-            print(request_data)
-            print(patient_data)
             serializer = PatientDataSerializer(data=patient_data)
             if serializer.is_valid():
                 serializer.save()
                 return Response({"status": "success", "data": serializer.data}, status=status.HTTP_201_CREATED)
             else:
-                print(serializer.errors)
                 return Response({"status": "error", "data": serializer.errors},
                                 status=status.HTTP_400_BAD_REQUEST)
         else:
@@ -187,7 +178,6 @@ class PatientAPI(APIView):
             patient_data = PatientData.objects.exclude(user__isnull=True).filter(patient_id=patient_id)
 
         serializer = PatientDataSerializer(patient_data, many=True)
-        print(serializer.data)
 
         return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
 
@@ -258,7 +248,6 @@ class PatientAPI(APIView):
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_200_OK)
         elif request_type == "update_scheduled_medicine":
-            print(request_data["patient_id"])
             patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
             medicine_id = request_data.get("medicine_id")
             
@@ -323,7 +312,6 @@ class PatientAPI(APIView):
                 patient_data.patient_medicines[medicine_id]["medicine_data"]["given_dates"][given_period] = given_dates
             except Exception:
                 return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
-            print(patient_data.patient_medicines[medicine_id]["medicine_data"]["given_dates"][given_period])
             patient_data.save()
 
             return Response({"status": "success", "data": patient_data.patient_medicines},
@@ -518,19 +506,26 @@ class PatientAPI(APIView):
             return Response({"error": "Email and Patient ID must be provided."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        user = get_user_model().objects.get(email=request_data["email"])
-        patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+        # Try to get user, but don't fail if user doesn't exist (for delete_patient operation)
+        try:
+            user = get_user_model().objects.get(email=request_data["email"])
+        except get_user_model().DoesNotExist:
+            # For delete_patient, we can proceed without the user if patient exists
+            user = None
 
-        if not patient_data:
-            return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+        patient_data_list = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))
+        if not patient_data_list:
+            return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        patient_data = patient_data_list[0]
 
         if request_type == "delete_patient":
             patient_personal_info = patient_data.patient_personal_info
             patient_personal_info["section_1"] = None
             patient_personal_info["section_2"] = None
             patient_data.patient_personal_info = patient_personal_info
-            patient_data.patient_id = ""
-            patient_data.user_id = None
+            patient_data.patient_id = uuid.uuid4()
+            patient_data.user = None
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_id}, status=status.HTTP_200_OK)
         elif request_type == "delete_medicines":
@@ -557,16 +552,11 @@ class PatientAPI(APIView):
             patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
             
             note_id = request_data.get("note_id")
-            date_obj = request_data.get("note_date")
             
-            if not patient_data.patient_notes or date_obj not in patient_data.patient_notes or note_id not in patient_data.patient_notes[date_obj]:
+            if not patient_data.patient_notes or note_id not in patient_data.patient_notes:
                 return Response({"status": "failed", "error": "Note not found"}, status=status.HTTP_404_NOT_FOUND)
             
-            del patient_data.patient_notes[date_obj][note_id]
-            
-            # Remove date entry if no notes left
-            if len(patient_data.patient_notes[date_obj]) == 0:
-                del patient_data.patient_notes[date_obj]
+            del patient_data.patient_notes[note_id]
             
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
@@ -591,7 +581,6 @@ class MedicineAPI(APIView):
 
     def post(self, request):
         request_data = dict(request.data)
-        print(request_data)
         email = request_data.pop("email")
         request_type = request_data.pop("type")
 
@@ -604,8 +593,6 @@ class MedicineAPI(APIView):
                 "medicine_data": request_data["medicine_data"]
             }
 
-            print(request_data)
-            print(medicine_data)
             serializer = MedicineDataSerializer(data=medicine_data)
             if serializer.is_valid():
                 serializer.save()
@@ -626,7 +613,5 @@ class MedicineAPI(APIView):
         user = get_user_model().objects.get(email=email)
         medicine_data = MedicineData.objects
         serializer = MedicineDataSerializer(medicine_data, many=True)
-        print(serializer)
-        print(serializer.data)
 
         return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
