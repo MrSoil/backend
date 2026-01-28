@@ -1,0 +1,2 @@
+# Bu klasör MongoDB seed dump dosyalarını içerir
+# Seed dump oluşturmak için: ./scripts/create_mongo_seed.sh veya scripts\create_mongo_seed.bat
