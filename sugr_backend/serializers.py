@@ -6,7 +6,7 @@ from collections import OrderedDict
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from sugr_backend.models import PatientData, MedicineData
+from sugr_backend.models import PatientData, MedicineData, FileData
 from io import BytesIO
 from PIL import Image
 import base64
@@ -93,3 +93,25 @@ class MedicineDataSerializer(serializers.ModelSerializer):
             medicine_data=validated_data['medicine_data']
         )
         return user
+
+
+class FileDataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FileData
+        fields = '__all__'
+
+    def create(self, validated_data):
+        file = FileData.objects.create(
+            file_id=validated_data['file_id'],
+            user=validated_data['user'],
+            patient_id=validated_data['patient_id'],
+            patient_firstname=validated_data['patient_firstname'],
+            patient_lastname=validated_data['patient_lastname'],
+            file_name=validated_data['file_name'],
+            file_category=validated_data['file_category'],
+            file_size=validated_data['file_size'],
+            uploaded_by=validated_data['uploaded_by'],
+            file_data=validated_data['file_data'],
+            file_type=validated_data['file_type']
+        )
+        return file

@@ -1,1 +1,0 @@
-{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"},{"v":{"$numberInt":"2"},"key":{"medicine_id":{"$numberInt":"1"}},"name":"__primary_key__","unique":true}],"uuid":"5901601987bd469ea0285faa3f001e15","collectionName":"sugr_backend_medicinedata","type":"collection"}
