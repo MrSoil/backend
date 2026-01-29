@@ -6,11 +6,15 @@ import uuid
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .serializers import UserSerializer, PatientDataSerializer, MedicineDataSerializer, FileDataSerializer
+from .serializers import (
+    UserSerializer, UserReadSerializer, AdminUserReadSerializer, AdminUserUpdateSerializer,
+    AdminPatientAccessSerializer,
+    PatientDataSerializer, MedicineDataSerializer, FileDataSerializer,
+)
 from .models import FileData
-
+from django.contrib.auth import get_user_model
 from django.core import serializers
 
 class RegisterUser(APIView):
@@ -35,17 +39,21 @@ class LoginUser(APIView):
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
-        user = get_user_model().objects.get(email=email)
-        user = authenticate(email=email, password=password) if user else None
-
+        try:
+            user = get_user_model().objects.get(email=email)
+        except get_user_model().DoesNotExist:
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        if not user.check_password(password):
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
         if user is not None:
             refresh = RefreshToken.for_user(user)
+            user_data = UserReadSerializer(user).data
             return Response({
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
+                'user': user_data,
             })
-        else:
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 from rest_framework.views import APIView
@@ -58,21 +66,37 @@ class CustomTokenVerifyView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        token = request.headers.get('Authorization', "").split(' ')[1]
+        auth_header = request.headers.get('Authorization') or ''
+        parts = auth_header.split()
+        if len(parts) != 2 or parts[0] != 'Bearer':
+            return Response({'success': False}, status=401)
+        token = parts[1]
         try:
-            UntypedToken(token)
-            return Response({'success': True})
-        except (InvalidToken, TokenError) as e:
+            untyped = UntypedToken(token)
+            user_id = untyped.get('user_id')
+            if not user_id:
+                return Response({'success': False}, status=401)
+            user = get_user_model().objects.get(pk=user_id)
+            user_data = UserReadSerializer(user).data
+            return Response({'success': True, 'user': user_data})
+        except (InvalidToken, TokenError, get_user_model().DoesNotExist):
             return Response({'success': False}, status=401)
 
 
 from .models import PatientData, MedicineData, FileData
-from django.contrib.auth import get_user_model
 from datetime import datetime
 from django.utils import timezone
+from django.db.models import Q
 from io import BytesIO
 from PIL import Image
 import base64
+
+
+def get_accessible_patients_queryset(user):
+    """Patients the user can access: own, allowed_users, or all if staff."""
+    if getattr(user, 'is_staff', False):
+        return PatientData.objects.all()
+    return PatientData.objects.filter(Q(user=user) | Q(allowed_users=user)).distinct()
 
 RESPONSE_TEMPLATE = {
     "Monday": {"drugs_data": [], "given_drugs": []},
@@ -124,14 +148,16 @@ def get_object_id(input_str):
 
 
 class PatientAPI(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+
+    def _user_email(self, request):
+        return request.user.email if request.user and request.user.is_authenticated else None
 
     def post(self, request):
         request_data = dict(request.data)
-        email = request_data.pop("email")
+        request_data.pop("email", None)
         request_type = request_data.pop("type")
-
-        user = get_user_model().objects.get(email=email)
+        user = request.user
 
         if request_type == "new":
             patient_data = {
@@ -168,16 +194,14 @@ class PatientAPI(APIView):
             return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
     def get(self, request):
-        email = request.query_params.get('email')
         patient_id = request.query_params.get('patient_id')
-
-        if not email:
-            return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
+        qs = get_accessible_patients_queryset(user)
 
         if not patient_id:
-            patient_data = PatientData.objects.exclude(user__isnull=True)
+            patient_data = qs
         else:
-            patient_data = PatientData.objects.exclude(user__isnull=True).filter(patient_id=patient_id)
+            patient_data = qs.filter(patient_id=patient_id)
 
         serializer = PatientDataSerializer(patient_data, many=True)
 
@@ -185,14 +209,14 @@ class PatientAPI(APIView):
 
     def put(self, request):
         request_data = dict(request.data)
-        email = request_data.pop("email")
+        request_data.pop("email", None)
         request_type = request_data.pop("type")
-
-        user = get_user_model().objects.get(email=email)
+        user = request.user
+        email = user.email
 
         if request_type == "update_patient":
             try:
-                patient_data = PatientData.objects.get(patient_id=request_data["patient_id"])
+                patient_data = get_accessible_patients_queryset(user).get(patient_id=request_data["patient_id"])
                 
                 def clean_none_values(obj):
                     """Recursively remove None values from dict/list structures, replacing with empty dict"""
@@ -309,7 +333,9 @@ class PatientAPI(APIView):
                 print(f"Error updating patient: {str(e)}")
                 return Response({"status": "error", "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         elif request_type == "add_scheduled_medicine":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             medicine_id = get_object_id(str(request_data["patient_id"]) + str(request_data["medicine_data"]))
             request_data["medicine_data"]["prepared_dates"] = {}
             request_data["medicine_data"]["given_dates"] = {"morning": {}, "noon": {}, "evening": {}}
@@ -329,7 +355,9 @@ class PatientAPI(APIView):
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_200_OK)
         elif request_type == "update_scheduled_medicine":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             medicine_id = request_data.get("medicine_id")
             
             if not medicine_id or medicine_id not in patient_data.patient_medicines:
@@ -368,7 +396,9 @@ class PatientAPI(APIView):
         elif request_type == "remove_scheduled_medicine":
             return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
         elif request_type == "add_given_medicine":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
 
             medicine_id = request_data["medicine_id"]
             given_period = request_data["period"]
@@ -398,7 +428,9 @@ class PatientAPI(APIView):
             return Response({"status": "success", "data": patient_data.patient_medicines},
                             status=status.HTTP_200_OK)
         elif request_type == "add_prepared_medicine":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
 
             medicine_id = request_data["medicine_id"]
             med_prepared_dates = patient_data.patient_medicines[medicine_id]["medicine_data"]["prepared_dates"]
@@ -418,7 +450,9 @@ class PatientAPI(APIView):
             return Response({"status": "success", "data": patient_data.patient_medicines},
                             status=status.HTTP_200_OK)
         elif request_type == "add_signed_hc":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
 
             date_obj = datetime.strptime(request_data["today_date"].split(" GMT")[0],
                                          "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
@@ -448,7 +482,9 @@ class PatientAPI(APIView):
                     return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
         elif request_type == "update_signed_hc":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
 
             date_obj = datetime.strptime(request_data["today_date"].split(" GMT")[0],
                                          "%a %b %d %Y %H:%M:%S").strftime("%d-%m-%y")
@@ -469,7 +505,9 @@ class PatientAPI(APIView):
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_signed_hc}, status=status.HTTP_200_OK)
         elif request_type == "add_vitals":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             
             # Initialize patient_vitals if it doesn't exist
             if not patient_data.patient_vitals:
@@ -521,7 +559,9 @@ class PatientAPI(APIView):
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_vitals}, status=status.HTTP_200_OK)
         elif request_type == "add_note":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             
             # Initialize patient_notes if it doesn't exist
             if not patient_data.patient_notes:
@@ -547,7 +587,9 @@ class PatientAPI(APIView):
             
             return Response({"status": "success", "data": patient_data.patient_notes}, status=status.HTTP_200_OK)
         elif request_type == "update_note":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             
             note_id = request_data.get("note_id")
             date_obj = request_data.get("note_date")
@@ -582,19 +624,13 @@ class PatientAPI(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
 
         request_type = request_data.get("type")
-
-        if not (request_data.get("email") and request_data.get("patient_id")):
-            return Response({"error": "Email and Patient ID must be provided."},
+        patient_id = request_data.get("patient_id")
+        if not patient_id:
+            return Response({"error": "Patient ID must be provided."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Try to get user, but don't fail if user doesn't exist (for delete_patient operation)
-        try:
-            user = get_user_model().objects.get(email=request_data["email"])
-        except get_user_model().DoesNotExist:
-            # For delete_patient, we can proceed without the user if patient exists
-            user = None
-
-        patient_data_list = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))
+        user = request.user
+        patient_data_list = list(get_accessible_patients_queryset(user).filter(patient_id=patient_id))
         if not patient_data_list:
             return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
         
@@ -620,7 +656,9 @@ class PatientAPI(APIView):
             patient_data.save()
             return Response({"status": "success", "data": patient_data.patient_id}, status=status.HTTP_200_OK)
         elif request_type == "delete_medicines":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
 
             medicine_ids = request_data.get("medicine_ids", [])
             if not medicine_ids:
@@ -640,7 +678,9 @@ class PatientAPI(APIView):
             return Response({"status": "success", "data": patient_data.patient_medicines}, status=status.HTTP_200_OK)
 
         elif request_type == "delete_note":
-            patient_data = list(PatientData.objects.filter(patient_id=request_data["patient_id"]))[0]
+            patient_data = get_accessible_patients_queryset(user).filter(patient_id=request_data["patient_id"]).first()
+            if not patient_data:
+                return Response({"status": "failed", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
             
             note_id = request_data.get("note_id")
             
@@ -668,14 +708,13 @@ class PatientAPI(APIView):
 
 
 class MedicineAPI(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         request_data = dict(request.data)
-        email = request_data.pop("email")
+        request_data.pop("email", None)
         request_type = request_data.pop("type")
-
-        user = get_user_model().objects.get(email=email)
+        user = request.user
 
         if request_type == "new":
             medicine_data = {
@@ -696,15 +735,8 @@ class MedicineAPI(APIView):
             return Response({"status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
     def get(self, request):
-        email = request.query_params.get('email')
-
-        if not email:
-            return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = get_user_model().objects.get(email=email)
-        medicine_data = MedicineData.objects
+        medicine_data = MedicineData.objects.all()
         serializer = MedicineDataSerializer(medicine_data, many=True)
-
         return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
 
 
@@ -867,24 +899,14 @@ def extract_files_from_patient_data(patient_data, user_email):
 
 
 class FileAPI(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        email = request.query_params.get('email')
-        
-        if not email:
-            return Response({"error": "email must be provided."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            user = get_user_model().objects.get(email=email)
-        except get_user_model().DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
-        
+        user = request.user
+        email = user.email
         all_files = []
         
-        # Extract files from PatientData - GET ALL PATIENTS (not filtered by user)
-        patient_data_list = PatientData.objects.all()
-        print(f"Found {len(patient_data_list)} total patients (all users)")
+        patient_data_list = PatientData.objects.filter(user=user)
         
         for patient_data in patient_data_list:
             try:
@@ -928,10 +950,8 @@ class FileAPI(APIView):
                 print(traceback.format_exc())
                 continue
         
-        print(f"Total files extracted: {len(all_files)}")
-        
-        # Get files from FileData - GET ALL FILES (not filtered by user)
-        file_data_list = FileData.objects.all()
+        # Get files from FileData - only this user's files
+        file_data_list = FileData.objects.filter(user=user)
         for file_data in file_data_list:
             all_files.append({
                 "file_id": file_data.file_id,
@@ -954,12 +974,9 @@ class FileAPI(APIView):
 
     def post(self, request):
         request_data = dict(request.data)
-        email = request_data.pop("email")
-        
-        try:
-            user = get_user_model().objects.get(email=email)
-        except get_user_model().DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        request_data.pop("email", None)
+        user = request.user
+        email = user.email
         
         file_id = f"file_{uuid.uuid4().hex}"
         
@@ -986,19 +1003,15 @@ class FileAPI(APIView):
 
     def put(self, request):
         request_data = dict(request.data)
-        email = request_data.get("email")
+        email = request.user.email
         file_id = request_data.get("file_id")
         source = request_data.get("source")
         source_id = request_data.get("source_id")
         field_path = request_data.get("field_path")
         
-        if not email:
-            return Response({"status": "error", "error": "email must be provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
         if source == "patient_data":
-            # Update file in PatientData
             try:
-                patient_data = PatientData.objects.get(patient_id=source_id)
+                patient_data = PatientData.objects.get(patient_id=source_id, user=request.user)
                 personal_info = patient_data.patient_personal_info or {}
                 
                 if field_path:
@@ -1036,9 +1049,9 @@ class FileAPI(APIView):
             except PatientData.DoesNotExist:
                 return Response({"status": "error", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
         elif source == "file_data":
-            # Update file in FileData
+            # Update file in FileData (only if file belongs to user)
             try:
-                file_data = FileData.objects.get(file_id=file_id)
+                file_data = FileData.objects.get(file_id=file_id, user=request.user)
                 file_data.file_name = request_data.get("file_name", file_data.file_name)
                 file_data.file_size = request_data.get("file_size", file_data.file_size)
                 file_data.file_data = request_data.get("file_data", file_data.file_data)
@@ -1062,9 +1075,8 @@ class FileAPI(APIView):
         field_path = request_data.get("field_path")
         
         if source == "patient_data":
-            # Delete file from PatientData (set to empty string)
             try:
-                patient_data = PatientData.objects.get(patient_id=source_id)
+                patient_data = PatientData.objects.get(patient_id=source_id, user=request.user)
                 personal_info = patient_data.patient_personal_info or {}
                 
                 if field_path:
@@ -1089,12 +1101,93 @@ class FileAPI(APIView):
             except PatientData.DoesNotExist:
                 return Response({"status": "error", "error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
         elif source == "file_data":
-            # Delete file from FileData
             try:
-                file_data = FileData.objects.get(file_id=file_id)
+                file_data = FileData.objects.get(file_id=file_id, user=request.user)
                 file_data.delete()
                 return Response({"status": "success"}, status=status.HTTP_200_OK)
             except FileData.DoesNotExist:
                 return Response({"status": "error", "error": "File not found"}, status=status.HTTP_404_NOT_FOUND)
         
         return Response({"status": "error", "error": "Invalid source"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# --- Admin API (is_staff only) ---
+from rest_framework.permissions import IsAdminUser
+
+
+class AdminUserList(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        users = get_user_model().objects.all().order_by('email')
+        data = AdminUserReadSerializer(users, many=True).data
+        return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)
+
+
+class AdminUserDetail(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, pk):
+        try:
+            user = get_user_model().objects.get(pk=pk)
+        except get_user_model().DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        data = AdminUserReadSerializer(user).data
+        return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)
+
+    def patch(self, request, pk):
+        try:
+            user = get_user_model().objects.get(pk=pk)
+        except get_user_model().DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AdminUserUpdateSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            user.refresh_from_db()
+            data = AdminUserReadSerializer(user).data
+            return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)
+        return Response({"status": "error", "data": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminPermissionsList(APIView):
+    """Return list of all permission codes (for admin UI)."""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        from .models import default_permission_codes
+        all_codes = list(default_permission_codes())
+        if "access_admin" not in all_codes:
+            all_codes.append("access_admin")
+        return Response({"status": "success", "data": sorted(all_codes)}, status=status.HTTP_200_OK)
+
+
+class AdminPatientList(APIView):
+    """List all patients with owner and allowed_users (for admin access management)."""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        patients = PatientData.objects.all().select_related('user').prefetch_related('allowed_users')
+        data = AdminPatientAccessSerializer(patients, many=True).data
+        return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)
+
+
+class AdminPatientAccessDetail(APIView):
+    """PATCH: set which users can access this patient (allowed_users)."""
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, patient_id):
+        user_ids = request.data.get('user_ids')
+        if user_ids is None:
+            return Response({"status": "error", "data": {"user_ids": "user_ids list required"}}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            patient = PatientData.objects.get(patient_id=patient_id)
+        except PatientData.DoesNotExist:
+            return Response({"error": "Patient not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Validate user_ids exist
+        User = get_user_model()
+        users = User.objects.filter(pk__in=user_ids)
+        if users.count() != len(user_ids):
+            return Response({"status": "error", "data": "Invalid user_ids"}, status=status.HTTP_400_BAD_REQUEST)
+        patient.allowed_users.set(users)
+        data = AdminPatientAccessSerializer(patient).data
+        return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)

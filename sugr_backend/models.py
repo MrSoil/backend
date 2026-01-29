@@ -18,6 +18,12 @@ class MedicineData(models.Model):
 
 class PatientData(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='patients')
+    allowed_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='accessible_patients',
+        blank=True,
+        help_text='Kullanıcılar bu danışanı görebilir ve düzenleyebilir (sahip her zaman erişebilir).',
+    )
     patient_id = models.CharField(max_length=255, unique=True)
 
     patient_personal_info = JSONField()
@@ -53,12 +59,32 @@ class FileData(models.Model):
         return self.file_id
 
 
+def default_permission_codes():
+    return [
+        "view_dashboard", "view_patients", "view_drugs", "view_files",
+        "edit_patient", "edit_patient_medicines", "edit_patient_notes",
+        "edit_patient_hc", "edit_patient_vitals", "export_medications",
+        "add_patient", "add_file", "edit_file", "delete_file",
+        "view_patient_detail",
+    ]
+
+
 class User(AbstractUser):
     first_name = models.CharField(max_length=255)
     last_name = models.CharField(max_length=255)
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=255)
-
+    permission_codes = models.JSONField(default=default_permission_codes, blank=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name', 'password']
+
+    def get_permission_codes(self):
+        # Use stored permission_codes; only default when never saved (None).
+        if self.permission_codes is None:
+            base = list(default_permission_codes())
+        else:
+            base = list(self.permission_codes)
+        if self.is_staff and "access_admin" not in base:
+            base.append("access_admin")
+        return base

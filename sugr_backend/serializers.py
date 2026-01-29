@@ -6,12 +6,25 @@ from collections import OrderedDict
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from sugr_backend.models import PatientData, MedicineData, FileData
+from sugr_backend.models import PatientData, MedicineData, FileData, default_permission_codes
 from io import BytesIO
 from PIL import Image
 import base64
 
 User = get_user_model()
+
+
+class UserReadSerializer(serializers.ModelSerializer):
+    """Read-only user info for login/verify response and admin API."""
+    permission_codes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'first_name', 'last_name', 'is_staff', 'permission_codes')
+        read_only_fields = fields
+
+    def get_permission_codes(self, obj):
+        return obj.get_permission_codes()
 
 
 class CustomJSONSerializer(serializers.BaseSerializer):
@@ -34,9 +47,49 @@ class UserSerializer(serializers.ModelSerializer):
             username=validated_data['email'],
             first_name=validated_data['first_name'],
             last_name=validated_data['last_name'],
-            password=validated_data['password']
+            password=validated_data['password'],
         )
+        user.permission_codes = default_permission_codes()
+        user.save(update_fields=['permission_codes'])
         return user
+
+
+class AdminUserReadSerializer(serializers.ModelSerializer):
+    """Admin panel: return raw permission_codes from DB so edit/save reflects correctly."""
+    permission_codes = serializers.JSONField(required=False, allow_null=True)
+
+    class Meta:
+        model = User
+        fields = ('id', 'email', 'first_name', 'last_name', 'is_staff', 'permission_codes')
+        read_only_fields = fields
+
+
+class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    """For PATCH: update permission_codes and is_staff only."""
+    permission_codes = serializers.JSONField(required=False, allow_null=True)
+
+    class Meta:
+        model = User
+        fields = ('permission_codes', 'is_staff')
+
+
+class AdminPatientAccessSerializer(serializers.Serializer):
+    """Admin panel: list patient with owner and allowed_users for access management."""
+    patient_id = serializers.CharField()
+    patient_name = serializers.SerializerMethodField()
+    owner_id = serializers.IntegerField(source='user_id')
+    owner_email = serializers.EmailField(source='user.email')
+    allowed_user_ids = serializers.SerializerMethodField()
+
+    def get_patient_name(self, obj):
+        info = obj.patient_personal_info or {}
+        section = info.get('section_1') or {}
+        first = section.get('firstname', '') or ''
+        last = section.get('lastname', '') or ''
+        return f"{first} {last}".strip() or obj.patient_id
+
+    def get_allowed_user_ids(self, obj):
+        return list(obj.allowed_users.values_list('id', flat=True))
 
 
 class PatientDataSerializer(serializers.ModelSerializer):
