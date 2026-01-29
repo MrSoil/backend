@@ -64,7 +64,7 @@ def default_permission_codes():
         "view_dashboard", "view_patients", "view_drugs", "view_files",
         "edit_patient", "edit_patient_medicines", "edit_patient_notes",
         "edit_patient_hc", "edit_patient_vitals", "export_medications",
-        "add_patient", "add_file", "edit_file", "delete_file",
+        "add_patient", "delete_patient", "add_file", "edit_file", "delete_file",
         "view_patient_detail",
     ]
 
@@ -80,11 +80,13 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ['first_name', 'last_name', 'password']
 
     def get_permission_codes(self):
-        # Use stored permission_codes; only default when never saved (None).
-        if self.permission_codes is None:
+        # Staff (admin) always get full permissions so they can see and manage everything.
+        if self.is_staff:
             base = list(default_permission_codes())
-        else:
-            base = list(self.permission_codes)
-        if self.is_staff and "access_admin" not in base:
-            base.append("access_admin")
-        return base
+            if "access_admin" not in base:
+                base.append("access_admin")
+            return base
+        # Non-staff: use stored permission_codes; only default when never saved (None).
+        if self.permission_codes is None:
+            return default_permission_codes()
+        return self.permission_codes

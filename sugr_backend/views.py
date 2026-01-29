@@ -905,8 +905,8 @@ class FileAPI(APIView):
         user = request.user
         email = user.email
         all_files = []
-        
-        patient_data_list = PatientData.objects.filter(user=user)
+        # Include files from all accessible patients (owner + allowed_users + staff)
+        patient_data_list = get_accessible_patients_queryset(user)
         
         for patient_data in patient_data_list:
             try:
